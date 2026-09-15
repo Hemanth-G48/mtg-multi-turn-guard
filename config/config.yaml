@@ -1,0 +1,18 @@
+risk:
+  weights:
+    alpha: 0.3
+    beta: 0.5
+    gamma: 0.2
+  
+  pattern_weights:
+    language_change: 0.2
+    domain_shift: 0.3
+    time_sensitivity: 0.2
+    prohibited_content: 0.3
+  
+  warn_threshold: 1.65 # ~50% of max risk
+  block_threshold: 2.475 # ~75% of max risk
+
+file_path: "dataset/harmbench_behaviors.csv"
+
+gcp_project_id: "[MY GCP PROJECT ID]"
