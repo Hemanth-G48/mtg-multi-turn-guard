@@ -32,6 +32,7 @@ class LLMManager:
         anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         google_genai_api_key = os.getenv("GOOGLE_GENAI_API_KEY")
         replicate_api_key = os.getenv("LLAMA_API_KEY")
+        deepseek_genai_api_key = os.getenv("DEEPSEEK_GENAI_API_KEY")
 
         gcp_project_id = self.config.gcp_project_id
         print(f"Loaded GCP project ID: {gcp_project_id}")
