@@ -13,3 +13,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+tests
+docs
+optuna_opt

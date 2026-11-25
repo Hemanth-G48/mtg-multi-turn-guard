@@ -20,8 +20,8 @@ security decision engine that allows, warns, or blocks an interaction.
   risk into a single evolving score as a conversation advances.
 - **Threshold-based decision engine** — maps the progressive risk score onto
   `allow`, `warn`, or `block` decisions with configurable thresholds.
-- **Multi-LLM analysis** — analyzes conversation pairs using GPT, Claude, or
-  Gemini (selectable per run).
+- **Multi-LLM analysis** — analyzes conversation pairs using Command Code
+  (DeepSeek V4.1 Flash), GPT, Claude, or Gemini (selectable per run).
 - **Dataset-driven evaluation** — bundles a dataset of multi-turn conversations
   labeled with attack tactics and runs the full guardrail pipeline over it.
 
@@ -39,7 +39,7 @@ mtg-multi-turn-guard/
 ├── intent/
 │   └── conversation_analyzer.py  # ConversationAnalyzer: orchestrates a run
 ├── llms/
-│   └── llm_manager.py       # LLMManager: calls GPT/Claude/Gemini, parses JSON
+│   └── llm_manager.py       # LLMManager: calls Command Code/GPT/Claude/Gemini, parses JSON
 ├── prompts/
 │   ├── prompt_templates.py  # PromptManager: per-LLM prompt templates
 │   └── prompt_response.py   # pydantic models for parsed LLM responses
@@ -66,9 +66,11 @@ mtg-multi-turn-guard/
 6. `SecurityDecisionEngine` maps the progressive risk onto an `allow` / `warn` /
    `block` decision using the configured thresholds.
 
-> **Note:** `LLMManager.parse_content` is currently a stub that returns an
-> empty structure; wiring it to parse the LLM's actual JSON output is required
-> to populate real risk figures during a run.
+> **Note:** the `commandcode` backend parses the model's JSON response directly
+> (`LLMManager.clean_and_parse_json`, which strips Markdown fences). The legacy
+> `LLMManager.parse_content` used by the `gpt` backend is still a stub that
+> returns an empty structure, so real risk figures are populated on the
+> `commandcode` path.
 
 ---
 
@@ -122,16 +124,33 @@ The weights are validated to sum to `1.0`; `MTGConfig.validate_weights` raises
 ## Setup
 
 Provide API keys via environment variables (a `.env` file is supported through
-`python-dotenv`):
+`python-dotenv`). Only the key for the provider you select is required:
 
 ```env
+COMMAND_CODE_API_KEY=...   # for --llm-type commandcode (deepseek/deepseek-v4.1-flash)
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 GOOGLE_GENAI_API_KEY=...
 # LLAMA_API_KEY=... (used for the optional Replicate/LLaMA backend)
 ```
 
-`LLMManager` raises `ValueError` on startup if any required key is missing.
+`LLMManager` raises `ValueError` when the key for the selected provider is
+missing. Clients are created lazily, so the other providers' keys are not
+required.
+
+### Command Code Provider API
+
+The `commandcode` backend calls Command Code's OpenAI-compatible Provider API at
+`https://api.commandcode.ai/provider/v1` with the model
+`deepseek/deepseek-v4.1-flash` (1M context, $0.15/$0.60 per 1M input/output
+tokens).
+
+- Create a key at https://commandcode.ai/settings/keys and export it as
+  `COMMAND_CODE_API_KEY`. The same key authenticates the CLI and the API.
+- API access requires a plan other than **Go** (GOAT, Pro, Max, Team, or the
+  pay-as-you-go Provider plan). Go keys get `403 upgrade_required`.
+- The CLI login at `~/.commandcode/auth.json` is not read by this project; set
+  the environment variable explicitly.
 
 ---
 
@@ -146,7 +165,7 @@ python intent/conversation_analyzer.py
 
 You will be prompted to:
 
-1. choose an LLM (`gpt`, `claude`, `gemini`),
+1. choose an LLM (`commandcode`, `gpt`, `claude`, `gemini`),
 2. select an attack tactic from the dataset,
 3. enter how many conversations to analyze.
 
@@ -168,6 +187,67 @@ df = manager.load_data()
 risk = RiskCalculator()
 engine = SecurityDecisionEngine()
 ```
+
+---
+
+## Baseline evaluation
+
+`baseline.py` runs the full guardrail pipeline (LLM analysis → pattern risk →
+progressive risk → security decision) over a stratified sample of the bundled
+dataset and reports detection metrics:
+
+```bash
+python baseline.py --per-tactic 5 --concurrency 8
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--per-tactic` | `2` | rows sampled per attack tactic (max 7 tactics) |
+| `--concurrency` | `4` | concurrent LLM calls |
+| `--llm-type` | `commandcode` | `commandcode`, `gpt`, `claude`, or `gemini` |
+| `--out` | `results/baseline_<llm-type>.json` | per-row + summary JSON |
+| `--verbose` | off | show the pipeline's internal logging |
+
+`report_baseline.py` prints a saved result file:
+
+```bash
+python report_baseline.py results/baseline_commandcode_5pt.json
+```
+
+Rows with fewer than two usable conversation pairs cannot form a prev/current
+comparison and are skipped before any LLM call; the run prints sampled versus
+analyzed counts.
+
+Reported metrics: rows and turn pairs analyzed, turn errors, mean final and mean
+max progressive risk, detection rate (block or warn), block rate, escalation
+rate, and a per-tactic breakdown.
+
+### Baseline: deepseek/deepseek-v4.1-flash, 5 per tactic
+
+29 rows (33 sampled; 4 skipped for having only one usable pair), 117 turn
+pairs, 0 turn errors, 382s, thresholds warn `1.65` / block `2.475`:
+
+```
+mean final risk 2.417    mean max risk 2.733
+detection (block|warn) 0.759    block rate 0.552    escalation 0.310
+final decisions: block 16, allow 7, warn 6
+```
+
+```
+tactic                       rows  block  warn  allow   blk%    mean
+Direct Request                  5      3     0      2    0.8   2.305
+Echoing                         3      1     0      2  0.333   1.579
+Hidden Intention Streamline     4      2     2      0   0.75   2.813
+Injection                       5      2     1      2    0.8    2.15
+Obfuscation                     3      1     1      1  0.667   2.101
+Output Format                   4      2     2      0    1.0     2.6
+Request Framing                 5      5     0      0    1.0   3.024
+```
+
+`Request Framing` and `Output Format` are caught every time; `Echoing` (1.579)
+is the weakest, sitting below the warn threshold on average. A single
+conversation per tactic earlier gave 0.714 detection — with 5 per tactic it
+settles at 0.759, so treat anything below ~5 per tactic as noise.
 
 ---
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 
 class Message(BaseModel):
@@ -25,7 +25,7 @@ class Response(BaseModel):
     content: str
     risk_level: Optional[int] = None
     recommendations: Optional[List[str]] = None
-    intent_shift: Optional[Dict[str, Optional[str]]] = None
-    prompt_attack: Optional[Dict[str, Optional[str]]] = None
-    patterns: Optional[Dict[str, Dict[str, Optional[str]]]] = None
-    overall_progression_summary: Optional[Dict[str, Optional[str]]] = None
+    intent_shift: Optional[Dict[str, Any]] = None
+    prompt_attack: Optional[Dict[str, Any]] = None
+    patterns: Optional[Dict[str, Dict[str, Any]]] = None
+    overall_progression_summary: Optional[Dict[str, Any]] = None

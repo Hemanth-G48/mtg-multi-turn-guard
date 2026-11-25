@@ -7,7 +7,7 @@ from dataset.dataset_manager import DatasetManager
 from dotenv import load_dotenv, find_dotenv
 
 class RiskCalculator:
-    def __init__(self, alpha=0.5, beta=0.3, gamma=0.2):
+    def __init__(self, alpha=None, beta=None, gamma=None, config=None):
         """
         Initialize the RiskCalculator with weights for historical, interaction, and pattern risks.
 
@@ -15,9 +15,28 @@ class RiskCalculator:
             alpha (float): Weight for historical risk.
             beta (float): Weight for interaction risk.
             gamma (float): Weight for pattern risk.
+            config (MTGConfig): Pre-built configuration. When omitted the
+                config/config.yaml file is loaded, which is the default path.
+
+        Three sourcing modes, in precedence order:
+            1. `config` given -> use it verbatim (opt-in, used by optimization).
+            2. alpha/beta/gamma given -> build a config from config.yaml.
+            3. nothing given -> load config.yaml unchanged.
         """
         self.historical_risk = 0  # Initialize historical risk as 0
-        self.config = MTGConfig("config/config.yaml")
+        if config is not None:
+            self.config = config
+        elif alpha is not None or beta is not None or gamma is not None:
+            overrides = {}
+            if alpha is not None:
+                overrides["alpha"] = alpha
+            if beta is not None:
+                overrides["beta"] = beta
+            if gamma is not None:
+                overrides["gamma"] = gamma
+            self.config = MTGConfig("config/config.yaml", {"risk": {"weights": overrides}})
+        else:
+            self.config = MTGConfig("config/config.yaml")
         self.pattern_weights = (
             self.config.risk.pattern_weights.to_dict()
         )  

@@ -9,6 +9,7 @@ class PromptManager:
     def get_template(self, llm_type: str) -> str:
         """Retrieve the appropriate template for the specified LLM type."""
         templates = {
+            "commandcode": self.gpt_prompt(),
             "gpt": self.gpt_prompt(),
             "claude": self.claude_prompt(),
             "gemini": self.gemini_prompt(),

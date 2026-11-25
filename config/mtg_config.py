@@ -86,11 +86,29 @@ class RiskConfig:
         print(f"  Block Threshold: {self.block_threshold}")
 
 
+def _deep_merge(base: dict, overrides: dict) -> dict:
+    merged = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class MTGConfig:
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, overrides: dict = None):
+        """
+        Args:
+            config_path (str): Path to the YAML configuration file.
+            overrides (dict, optional): Nested values merged over the loaded
+                YAML before validation. Omit to load the file verbatim.
+        """
         try:
             with open(config_path) as f:
                 data = yaml.safe_load(f)
+                if overrides:
+                    data = _deep_merge(data, overrides)
                 self.risk = RiskConfig().load_from_dict(data["risk"])
                 self.file_path = data["file_path"]
                 self.log_level = data.get("log_level", "INFO")
