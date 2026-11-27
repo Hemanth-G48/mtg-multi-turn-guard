@@ -1,15 +1,17 @@
 from config.mtg_config import MTGConfig
 
 class SecurityDecisionEngine:
-    def __init__(self):
+    def __init__(self, config=None):
         """
         Initialize the SecurityDecisionEngine with thresholds.
 
         Args:
             warn_threshold (float): The threshold above which a warning is issued.
             block_threshold (float): The threshold above which interactions are blocked.
+            config (MTGConfig): Pre-built configuration. When omitted the
+                config/config.yaml file is loaded, which is the default path.
         """
-        mtgConfig = MTGConfig("config/config.yaml")
+        mtgConfig = config if config is not None else MTGConfig("config/config.yaml")
         self.warn_threshold = mtgConfig.risk.warn_threshold
         self.block_threshold = mtgConfig.risk.block_threshold
 

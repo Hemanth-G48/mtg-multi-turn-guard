@@ -5,12 +5,16 @@ import json
 from typing import Dict, Any, Tuple
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
-import google.generativeai as genai
 
 # import replicate
 from prompts.prompt_templates import PromptManager
 from config.mtg_config import MTGConfig
 from prompts.prompt_response import Response
+
+# Command Code Provider API: OpenAI-compatible endpoint serving deepseek/deepseek-v4.1-flash
+COMMAND_CODE_BASE_URL = "https://api.commandcode.ai/provider/v1"
+COMMAND_CODE_MODEL = "deepseek/deepseek-v4.1-flash"
+
 
 class LLMManager:
     def __init__(self, prompt_manager: PromptManager):
@@ -25,39 +29,43 @@ class LLMManager:
         # Load environment variables from .env file
         load_dotenv(find_dotenv())
 
-        print("Did dotenv loaded correctly: ", os.getenv("OPENAI_API_KEY"))
-
-        # Access environment variables
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        google_genai_api_key = os.getenv("GOOGLE_GENAI_API_KEY")
-        replicate_api_key = os.getenv("LLAMA_API_KEY")
-        deepseek_genai_api_key = os.getenv("DEEPSEEK_GENAI_API_KEY")
-
-        gcp_project_id = self.config.gcp_project_id
-        print(f"Loaded GCP project ID: {gcp_project_id}")
-        # Initialize OpenAI client
-
-        if not openai_api_key:
-            raise ValueError("Missing OPENAI_API_KEY environment variable")
-        self.openai_client = AsyncOpenAI(api_key=openai_api_key)
-
-        # Initialize Anthropic client
-        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not anthropic_api_key:
-            raise ValueError("Missing ANTHROPIC_API_KEY environment variable")
-        self.anthropic_client = AsyncAnthropic(api_key=anthropic_api_key)
-
-        # Google Generative AI API key
+        # Access environment variables. Clients are created lazily so a run only
+        # needs the key for the provider it actually uses.
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.google_api_key = os.getenv("GOOGLE_GENAI_API_KEY")
-        if not self.google_api_key:
-            raise ValueError("Missing GOOGLE_GENAI_API_KEY environment variable")
+        self.commandcode_api_key = os.getenv("COMMAND_CODE_API_KEY")
 
-        # Initialize Replicate client
-        # replicate_api_key = os.getenv("LLAMA_API_KEY")
-        # if not replicate_api_key:
-        #     raise ValueError("Missing REPLICATE_API_KEY environment variable")
-        # self.replicate_client = replicate.Client(api_token=replicate_api_key)
+        self.openai_client = None
+        self.anthropic_client = None
+        self.commandcode_client = None
+
+    def _get_openai_client(self) -> AsyncOpenAI:
+        if not self.openai_api_key:
+            raise ValueError("Missing OPENAI_API_KEY environment variable")
+        if self.openai_client is None:
+            self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+        return self.openai_client
+
+    def _get_anthropic_client(self) -> AsyncAnthropic:
+        if not self.anthropic_api_key:
+            raise ValueError("Missing ANTHROPIC_API_KEY environment variable")
+        if self.anthropic_client is None:
+            self.anthropic_client = AsyncAnthropic(api_key=self.anthropic_api_key)
+        return self.anthropic_client
+
+    def _get_commandcode_client(self) -> AsyncOpenAI:
+        if not self.commandcode_api_key:
+            raise ValueError(
+                "Missing COMMAND_CODE_API_KEY environment variable. Create a key at "
+                "https://commandcode.ai/settings/keys (API access requires a GOAT plan or higher)."
+            )
+        if self.commandcode_client is None:
+            self.commandcode_client = AsyncOpenAI(
+                api_key=self.commandcode_api_key,
+                base_url=COMMAND_CODE_BASE_URL,
+            )
+        return self.commandcode_client
 
     async def analyze_conversation(
         self, llm_type: str, prev_pair: Tuple[str, str], current_pair: Tuple[str, str]
@@ -80,6 +88,7 @@ class LLMManager:
         # print("Prompt formatted: " + prompt)
 
         handlers = {
+            "commandcode": self._call_commandcode,
             "gpt": self._call_gpt,
             "claude": self._call_claude,
             "gemini": self._call_gemini,
@@ -92,6 +101,50 @@ class LLMManager:
 
         return await handler(prompt)
 
+    async def _call_commandcode(self, prompt: str) -> Dict[str, Any]:
+        """
+        Calls Command Code Provider API with the provided prompt.
+
+        Args:
+            prompt (str): The input prompt for the model.
+
+        Returns:
+            Dict[str, Any]: The response as a JSON dictionary.
+        """
+        client = self._get_commandcode_client()
+        response = await client.chat.completions.create(
+            model=COMMAND_CODE_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+        )
+
+        response_content = response.choices[0].message.content
+        parsed_data = self.clean_and_parse_json(response_content)
+
+        response_out = Response(
+            content=response_content,
+            risk_level=parsed_data.get("risk_level"),
+            recommendations=parsed_data.get("recommendations"),
+            intent_shift=parsed_data.get("intent_shift"),
+            prompt_attack=parsed_data.get("prompt_attack"),
+            patterns=parsed_data.get("patterns"),
+            overall_progression_summary=parsed_data.get("overall_progression_summary"),
+        )
+
+        return response_out.dict()
+
+    @staticmethod
+    def clean_and_parse_json(content: str) -> dict:
+        """
+        Strips Markdown code fences and parses the model's JSON response.
+        """
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+            if cleaned.rstrip().endswith("```"):
+                cleaned = cleaned.rstrip()[:-3]
+        return json.loads(cleaned.strip())
+
     async def _call_gpt(self, prompt: str) -> Dict[str, Any]:
         """
         Calls OpenAI GPT model with the provided prompt.
@@ -102,7 +155,7 @@ class LLMManager:
         Returns:
             Dict[str, Any]: The response as a JSON dictionary.
         """
-        response = await self.openai_client.chat.completions.create(
+        response = await self._get_openai_client().chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
@@ -163,7 +216,7 @@ class LLMManager:
         Returns:
             Dict[str, Any]: The response as a JSON dictionary.
         """
-        response = await self.anthropic_client.messages.create(
+        response = await self._get_anthropic_client().messages.create(
             model="claude-3-sonnet-20240229",
             max_tokens=2000,
             temperature=0.1,
@@ -181,6 +234,15 @@ class LLMManager:
         Returns:
             Dict[str, Any]: The response as a JSON dictionary.
         """
+        if not self.google_api_key:
+            raise ValueError("Missing GOOGLE_GENAI_API_KEY environment variable")
+        try:
+            import google.generativeai as genai
+        except ImportError:
+            raise ImportError(
+                "google-generativeai is required for the gemini backend: "
+                "pip install google-generativeai"
+            )
         genai.configure(api_key=self.google_api_key)
         model = genai.GenerativeModel("gemini-pro")
         response = await model.generate_content_async(prompt)

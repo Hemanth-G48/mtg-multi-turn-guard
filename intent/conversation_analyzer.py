@@ -24,6 +24,9 @@ class ConversationAnalyzer:
         self.historical_risk = 0  # Initialize historical risk
 
     def clean_and_parse_content(self, content):
+        """
+        Cleans Markdown formatting and parses the content field as JSON.
+        """
         try:
             cleaned_content = (
                 content.strip("`").replace("```json", "").replace("```", "").strip()
@@ -63,6 +66,9 @@ class ConversationAnalyzer:
                 print("Error:", e)
 
     def validate_pairs(self, prev_pair, current_pair):
+        """
+        Validates that both previous and current pairs are complete and non-empty.
+        """
         if not prev_pair or len(prev_pair) != 2 or not all(prev_pair):
             print(f"Invalid previous pair: {prev_pair}")
             return False
@@ -72,6 +78,9 @@ class ConversationAnalyzer:
         return True
 
     def process_response(self, response, row_idx, pair_idx, prev_pair, current_pair):
+        """
+        Processes the LLM response, performs risk analysis, and makes decisions.
+        """
         print("Current historical risk:", self.historical_risk)
         print(f"Row {row_idx + 1}, Conversation {pair_idx}:")
         print("Previous Pair:", prev_pair)
@@ -178,7 +187,7 @@ class ConversationAnalyzer:
 
 if __name__ == "__main__":
     # Prompt user for LLM type
-    llm_options = ["gpt", "claude", "gemini"]
+    llm_options = ["commandcode", "gpt", "claude", "gemini"]
     print("\nAvailable LLM types:")
     for i, llm in enumerate(llm_options, 1):
         print(f"  {i}. {llm}")
